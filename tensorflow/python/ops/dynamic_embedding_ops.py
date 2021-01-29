@@ -521,7 +521,8 @@ def embedding_lookup(
           initial_value=initial_value,
           dtype=params.value_dtype,
           trainable=params.trainable,
-          collections=collections)
+          collections=collections,
+	  model_mode=ModelMode.CURRENT_SETTING)
       embeddings = array_ops.identity(trainable_)
       embeddings.set_shape(trainable_shape)
 
@@ -871,3 +872,50 @@ def create_slots(primary, init, slot_name, op_name):
                                        return_trainable=True)
 
   return slot_trainable
+
+
+@tf_export("dynamic_embedding.ModelMode")
+class ModelMode(object):
+  """The global config of model modes.
+
+    For `TrainableWrapper` is not multi-threads safe that causes threads
+    competition and Out-Of-Bound exception in highly concurrent
+    inference scenario. So we define the `ModelMode` APIs to instruct
+    the `TrainableWrapper` to build different multi-threads safe sub-graph
+    for 'TrainableWrapper.read_values' on inference mode.
+
+  The following standard modes are defined:
+
+  * `TRAIN`: training/fitting mode.
+  * `INFERENCE`: predication/inference mode.
+  """
+
+  TRAIN = 'train'
+  INFERENCE = 'inference'
+
+  # The default setting is training mode.
+  CURRENT_SETTING = TRAIN
+
+
+@tf_export("dynamic_embedding.get_model_mode")
+def get_model_mode():
+  """ get model mode.
+
+  Returns:
+    A string: `train` or 'inference'
+  """
+  return ModelMode.CURRENT_SETTING
+
+
+@tf_export("dynamic_embedding.enable_train_mode")
+def enable_train_mode():
+  """ enable train mode.
+  """
+  ModelMode.CURRENT_SETTING = ModelMode.TRAIN
+
+
+@tf_export("dynamic_embedding.enable_inference_mode")
+def enable_inference_mode():
+  """ set inference mode.
+  """
+  ModelMode.CURRENT_SETTING = ModelMode.INFERENCE

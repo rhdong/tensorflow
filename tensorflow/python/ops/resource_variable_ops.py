@@ -1927,10 +1927,15 @@ class TrainableWrapper(ResourceVariable):
     self.params = params
     self.ids = ids
     self.max_norm = max_norm
-    self.prefetch_values = self.transform(self.params.lookup(self.ids))
-    self.prefetch_values_again = self.transform(self.params.lookup(self.ids))
-
+    self.prefetch_values_op = None
+    self.model_mode = kwargs.get("model_mode")
+    kwargs.pop("model_mode")
     super(TrainableWrapper, self).__init__(*args, **kwargs)
+
+  def prefetch_values(self):
+    if self.prefetch_values_op is None:
+      self.prefetch_values_op = self.transform(self.params.lookup(self.ids))
+    return self.prefetch_values_op
 
   def _init_from_args(self,
                       initial_value=None,
@@ -2108,7 +2113,7 @@ class TrainableWrapper(ResourceVariable):
             with ops.device(handle.device):
               with ops.control_dependencies([
                 gen_resource_variable_ops.assign_variable_op(
-                  handle, self.prefetch_values,
+                  handle, self.prefetch_values(),
                   name="AssignBeforeInitRead")]):
                 value = gen_resource_variable_ops.read_variable_op(handle,
                                                                    dtype)
@@ -2136,7 +2141,7 @@ class TrainableWrapper(ResourceVariable):
             with ops.device(caching_device):
               with ops.control_dependencies([
                 gen_resource_variable_ops.assign_variable_op(
-                  handle, self.prefetch_values,
+                  handle, self.prefetch_values(),
                   name="AssignBeforeInitRead")]):
                 cached_value = gen_resource_variable_ops.read_variable_op(
                   handle, dtype)
@@ -2168,16 +2173,20 @@ class TrainableWrapper(ResourceVariable):
 
   def _read_variable_op(self, do_prefetch=True):
     variable_accessed(self)
-    if do_prefetch:
-      with ops.control_dependencies([
-          gen_resource_variable_ops.assign_variable_op(
-            self._handle, self.prefetch_values, name="AssignBeforeReadVariable")]):
+    if self.model_mode == "train":
+      if do_prefetch:
+        with ops.control_dependencies([
+            gen_resource_variable_ops.assign_variable_op(
+              self._handle, self.prefetch_values(), name="AssignBeforeReadVariable")]):
+          _result = gen_resource_variable_ops.read_variable_op(self._handle,
+                                                               self._dtype)
+      else:
         _result = gen_resource_variable_ops.read_variable_op(self._handle,
                                                              self._dtype)
+      _maybe_set_handle_data(self._dtype, self._handle, _result)
     else:
-      _result = gen_resource_variable_ops.read_variable_op(self._handle,
-                                                           self._dtype)
-    _maybe_set_handle_data(self._dtype, self._handle, _result)
+      _result = self.prefetch_values()
+      _maybe_set_handle_data(self._dtype, self._handle, _result)
 
     if not context.executing_eagerly():
       # Note that if a control flow context is active the input of the read op
